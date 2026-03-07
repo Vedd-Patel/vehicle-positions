@@ -22,6 +22,7 @@ type Tracker struct {
 	mu       sync.RWMutex
 	vehicles map[string]*VehicleState
 	maxAge   time.Duration
+	done     chan struct{}
 }
 
 // NewTracker creates a Tracker with the given staleness threshold.
@@ -29,10 +30,31 @@ func NewTracker(maxAge time.Duration) *Tracker {
 	if maxAge <= 0 {
 		panic("maxAge must be positive")
 	}
-	return &Tracker{
+
+	t := &Tracker{
 		vehicles: make(map[string]*VehicleState),
 		maxAge:   maxAge,
+		done:     make(chan struct{}),
 	}
+
+	go func() {
+		ticker := time.NewTicker(maxAge)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				t.cleanup()
+			case <-t.done:
+				return
+			}
+		}
+	}()
+
+	return t
+}
+
+func (t *Tracker) Stop() {
+	close(t.done)
 }
 
 // Update stores or replaces the latest position for a vehicle.
@@ -64,4 +86,16 @@ func (t *Tracker) ActiveVehicles() []*VehicleState {
 		}
 	}
 	return active
+}
+
+// cleanup removes old entries from the tracker to prevent unbounded memory growth.
+func (t *Tracker) cleanup() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	cutoff := time.Now().Add(-t.maxAge)
+	for id, v := range t.vehicles {
+		if v.UpdatedAt.Before(cutoff) {
+			delete(t.vehicles, id)
+		}
+	}
 }

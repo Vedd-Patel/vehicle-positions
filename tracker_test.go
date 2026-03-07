@@ -101,3 +101,17 @@ func TestNewTracker_PanicsOnInvalidMaxAge(t *testing.T) {
 		NewTracker(-1 * time.Second)
 	}, "NewTracker with negative duration should panic")
 }
+
+func TestTracker_Cleanup(t *testing.T) {
+
+	maxAge := 10 * time.Millisecond
+	tracker := NewTracker(maxAge)
+
+	tracker.Update(&LocationReport{VehicleID: "bus-1", Timestamp: 1})
+
+	time.Sleep(25 * time.Millisecond)
+
+	tracker.mu.RLock()
+	defer tracker.mu.RUnlock()
+	assert.Len(t, tracker.vehicles, 0, "stale vehicle should be deleted from internal map")
+}
