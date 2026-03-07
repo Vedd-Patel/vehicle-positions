@@ -56,7 +56,8 @@ func (t *Tracker) ActiveVehicles() []*VehicleState {
 	var active []*VehicleState
 	for _, v := range t.vehicles {
 		if v.UpdatedAt.After(cutoff) {
-			active = append(active, v)
+			copy := *v
+			active = append(active, &copy)
 		}
 	}
 	return active

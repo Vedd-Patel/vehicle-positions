@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -55,6 +56,7 @@ func handlePostLocation(store *Store, tracker *Tracker) http.HandlerFunc {
 		}
 
 		if err := store.SaveLocation(r.Context(), &loc); err != nil {
+			log.Printf("failed to save location for vehicle %s: %v", loc.VehicleID, err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save location"})
 			return
 		}
@@ -73,21 +75,27 @@ func handleGetFeed(tracker *Tracker) http.HandlerFunc {
 		if r.URL.Query().Get("format") == "json" {
 			data, err := protojson.Marshal(feed)
 			if err != nil {
+				log.Printf("failed to marshal feed as JSON: %v", err)
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to marshal feed"})
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.Write(data)
+			if _, err := w.Write(data); err != nil {
+				log.Printf("failed to write JSON response: %v", err)
+			}
 			return
 		}
 
 		data, err := proto.Marshal(feed)
 		if err != nil {
+			log.Printf("failed to marshal feed as protobuf: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to marshal feed"})
 			return
 		}
 		w.Header().Set("Content-Type", "application/x-protobuf")
-		w.Write(data)
+		if _, err := w.Write(data); err != nil {
+			log.Printf("failed to write protobuf response: %v", err)
+		}
 	}
 }
 
@@ -134,5 +142,7 @@ func buildFeed(vehicles []*VehicleState) *gtfs.FeedMessage {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("failed to write JSON response: %v", err)
+	}
 }
