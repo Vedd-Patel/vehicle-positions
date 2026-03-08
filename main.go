@@ -22,6 +22,12 @@ func main() {
 	writeTimeout := envDurationOrDefault("WRITE_TIMEOUT", 15*time.Second)
 	idleTimeout := envDurationOrDefault("IDLE_TIMEOUT", 60*time.Second)
 
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		log.Fatal("JWT_SECRET env var is required")
+	}
+	jwtSecret = []byte(secret)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -55,13 +61,15 @@ func main() {
 	startTime := time.Now()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/locations", handlePostLocation(store, tracker))
+	mux.HandleFunc("POST /api/v1/auth/login", handleLogin(store))
 	mux.HandleFunc("GET /gtfs-rt/vehicle-positions", handleGetFeed(tracker))
 	// TODO: protect with requireAuth once auth lands
 	mux.HandleFunc("GET /api/v1/admin/status", handleAdminStatus(tracker, startTime))
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+
+	mux.Handle("POST /api/v1/locations", requireAuth(handlePostLocation(store, tracker)))
 
 	srv := &http.Server{
 		Addr:         ":" + port,
