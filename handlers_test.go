@@ -286,6 +286,10 @@ func TestHandlePostLocation_UnknownFieldRejected(t *testing.T) {
 	w := postLocationWithBody(handler, body, "application/json")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]string
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Contains(t, resp["error"], "unknown field")
 }
 
 func TestHandlePostLocation_TrailingJSONRejected(t *testing.T) {
@@ -296,4 +300,8 @@ func TestHandlePostLocation_TrailingJSONRejected(t *testing.T) {
 	w := postLocationWithBody(handler, body, "application/json")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]string
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Contains(t, resp["error"], "single JSON object")
 }
