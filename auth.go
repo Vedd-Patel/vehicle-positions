@@ -4,16 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// jwtSecret is set from the JWT_SECRET env var in main.go.
-var jwtSecret []byte
+type contextKey string
+
+const claimsKey contextKey = "claims"
 
 // LoginRequest is the JSON payload for POST /api/v1/auth/login.
 type LoginRequest struct {
@@ -31,13 +34,11 @@ type UserFetcher interface {
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 }
 
-func handleLogin(store UserFetcher) http.HandlerFunc {
+func handleLogin(fetcher UserFetcher, secret []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-
 		var req LoginRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 			return
 		}
 
@@ -46,68 +47,83 @@ func handleLogin(store UserFetcher) http.HandlerFunc {
 			return
 		}
 
-		user, err := store.GetUserByEmail(r.Context(), req.Email)
+		user, err := fetcher.GetUserByEmail(r.Context(), req.Email)
 		if err != nil {
-			// Always 401 — never reveal whether the email exists
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
+			if errors.Is(err, pgx.ErrNoRows) {
+				bcrypt.CompareHashAndPassword([]byte("$2a$10$0000000000000000000000uaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), []byte(req.Password))
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
+				return
+			}
+			log.Printf("login: database error: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
 
-		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
-			return
-		}
-
-		token, err := generateJWT(user)
+		err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate token"})
+			if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
+				return
+			}
+			log.Printf("login: bcrypt error: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
 
-		writeJSON(w, http.StatusOK, LoginResponse{Token: token})
+		tokenStr, err := generateJWT(user, secret)
+		if err != nil {
+			log.Printf("login: failed to generate JWT: %v", err) // Point 8
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, LoginResponse{Token: tokenStr})
 	}
 }
 
 // generateJWT creates a signed JWT valid for 24 hours.
-func generateJWT(user *User) (string, error) {
+func generateJWT(user *User, secret []byte) (string, error) {
 	claims := jwt.MapClaims{
 		"sub":   user.ID,
 		"email": user.Email,
 		"role":  user.Role,
 		"exp":   time.Now().Add(24 * time.Hour).Unix(),
 		"iat":   time.Now().Unix(),
+		"iss":   "vehicle-positions-api",
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString(secret)
 }
 
 // requireAuth is middleware that validates the Bearer JWT on protected routes.
-func requireAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing Authorization header"})
-			return
-		}
-
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Authorization header must be: Bearer <token>"})
-			return
-		}
-
-		token, err := jwt.Parse(parts[1], func(t *jwt.Token) (any, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, errors.New("unexpected signing method")
+func requireAuth(secret []byte) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid authorization header"})
+				return
 			}
-			return jwtSecret, nil
+
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+
+			token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
+				return secret, nil
+			}, jwt.WithIssuer("vehicle-positions-api"))
+
+			if err != nil || !token.Valid {
+				log.Printf("auth: token validation failed: %v", err)
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+				return
+			}
+
+			claims, ok := token.Claims.(jwt.MapClaims)
+			if !ok {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token claims"})
+				return
+			}
+			ctx := context.WithValue(r.Context(), claimsKey, claims)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
-
-		if err != nil || !token.Valid {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired token"})
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+	}
 }

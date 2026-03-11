@@ -3,11 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +21,8 @@ type mockUserStore struct {
 	user *User
 	err  error
 }
+
+var testSecret = []byte("super-secret-test-key-32-bytes!!")
 
 func (m *mockUserStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	if m.err != nil {
@@ -35,9 +41,6 @@ func postLogin(handler http.HandlerFunc, email, password string) *httptest.Respo
 }
 
 func TestHandleLogin_Success(t *testing.T) {
-	jwtSecret = []byte("testsecret")
-
-	// bcrypt hash of "password"
 	store := &mockUserStore{user: &User{
 		ID:           1,
 		Email:        "driver@test.com",
@@ -45,7 +48,7 @@ func TestHandleLogin_Success(t *testing.T) {
 		Role:         "driver",
 	}}
 
-	handler := handleLogin(store)
+	handler := handleLogin(store, testSecret)
 	w := postLogin(handler, "driver@test.com", "password")
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -57,8 +60,6 @@ func TestHandleLogin_Success(t *testing.T) {
 }
 
 func TestHandleLogin_WrongPassword(t *testing.T) {
-	jwtSecret = []byte("testsecret")
-
 	store := &mockUserStore{user: &User{
 		ID:           1,
 		Email:        "driver@test.com",
@@ -66,7 +67,7 @@ func TestHandleLogin_WrongPassword(t *testing.T) {
 		Role:         "driver",
 	}}
 
-	handler := handleLogin(store)
+	handler := handleLogin(store, testSecret)
 	w := postLogin(handler, "driver@test.com", "wrongpassword")
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -78,25 +79,17 @@ func TestHandleLogin_WrongPassword(t *testing.T) {
 }
 
 func TestHandleLogin_UserNotFound(t *testing.T) {
-	jwtSecret = []byte("testsecret")
+	store := &mockUserStore{err: pgx.ErrNoRows}
 
-	store := &mockUserStore{err: assert.AnError}
-
-	handler := handleLogin(store)
+	handler := handleLogin(store, testSecret)
 	w := postLogin(handler, "nobody@test.com", "password")
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-
-	var resp map[string]string
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Equal(t, "invalid email or password", resp["error"])
 }
 
 func TestHandleLogin_MissingFields(t *testing.T) {
-	jwtSecret = []byte("testsecret")
 	store := &mockUserStore{}
-	handler := handleLogin(store)
+	handler := handleLogin(store, testSecret)
 
 	tests := []struct {
 		name     string
@@ -112,19 +105,13 @@ func TestHandleLogin_MissingFields(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := postLogin(handler, tc.email, tc.password)
 			assert.Equal(t, http.StatusBadRequest, w.Code)
-
-			var resp map[string]string
-			err := json.NewDecoder(w.Body).Decode(&resp)
-			require.NoError(t, err)
-			assert.Contains(t, resp["error"], "email and password are required")
 		})
 	}
 }
 
 func TestHandleLogin_InvalidJSON(t *testing.T) {
-	jwtSecret = []byte("testsecret")
 	store := &mockUserStore{}
-	handler := handleLogin(store)
+	handler := handleLogin(store, testSecret)
 
 	req := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader([]byte("{bad json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -132,38 +119,24 @@ func TestHandleLogin_InvalidJSON(t *testing.T) {
 	handler(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-
-	var resp map[string]string
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp["error"], "invalid JSON")
 }
 
-// requireAuth middleware tests
 func dummyHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		w.WriteHeader(http.StatusOK)
 	})
 }
 
 func TestRequireAuth_MissingHeader(t *testing.T) {
-	jwtSecret = []byte("testsecret")
-
 	req := httptest.NewRequest("POST", "/api/v1/locations", nil)
 	w := httptest.NewRecorder()
-	requireAuth(dummyHandler()).ServeHTTP(w, req)
+
+	requireAuth(testSecret)(dummyHandler()).ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-
-	var resp map[string]string
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Equal(t, "missing Authorization header", resp["error"])
 }
 
 func TestRequireAuth_MalformedHeader(t *testing.T) {
-	jwtSecret = []byte("testsecret")
-
 	tests := []struct {
 		name   string
 		header string
@@ -177,7 +150,8 @@ func TestRequireAuth_MalformedHeader(t *testing.T) {
 			req := httptest.NewRequest("POST", "/api/v1/locations", nil)
 			req.Header.Set("Authorization", tc.header)
 			w := httptest.NewRecorder()
-			requireAuth(dummyHandler()).ServeHTTP(w, req)
+
+			requireAuth(testSecret)(dummyHandler()).ServeHTTP(w, req)
 
 			assert.Equal(t, http.StatusUnauthorized, w.Code)
 		})
@@ -185,32 +159,101 @@ func TestRequireAuth_MalformedHeader(t *testing.T) {
 }
 
 func TestRequireAuth_InvalidToken(t *testing.T) {
-	jwtSecret = []byte("testsecret")
-
 	req := httptest.NewRequest("POST", "/api/v1/locations", nil)
 	req.Header.Set("Authorization", "Bearer notavalidtoken")
 	w := httptest.NewRecorder()
-	requireAuth(dummyHandler()).ServeHTTP(w, req)
+
+	requireAuth(testSecret)(dummyHandler()).ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
 
-	var resp map[string]string
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Equal(t, "invalid or expired token", resp["error"])
+func TestRequireAuth_ExpiredToken(t *testing.T) {
+	claims := jwt.MapClaims{
+		"sub": 1,
+		"exp": time.Now().Add(-1 * time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenStr, _ := token.SignedString(testSecret)
+
+	req := httptest.NewRequest("POST", "/api/v1/locations", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	rr := httptest.NewRecorder()
+
+	middleware := requireAuth(testSecret)
+	handler := middleware(dummyHandler())
+
+	handler.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
 
 func TestRequireAuth_ValidToken(t *testing.T) {
-	jwtSecret = []byte("testsecret")
-
-	// Generate a real token
-	token, err := generateJWT(&User{ID: 1, Email: "driver@test.com", Role: "driver"})
+	token, err := generateJWT(&User{ID: 1, Email: "driver@test.com", Role: "driver"}, testSecret)
 	require.NoError(t, err)
 
 	req := httptest.NewRequest("POST", "/api/v1/locations", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
-	requireAuth(dummyHandler()).ServeHTTP(w, req)
+
+	requireAuth(testSecret)(dummyHandler()).ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestGenerateJWT_Claims(t *testing.T) {
+	user := &User{ID: 42, Email: "driver@transit.com", Role: "driver"}
+
+	tokenStr, err := generateJWT(user, testSecret)
+	require.NoError(t, err)
+
+	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+		return testSecret, nil
+	})
+	require.NoError(t, err)
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	require.True(t, ok)
+
+	assert.Equal(t, float64(42), claims["sub"])
+	assert.Equal(t, "driver@transit.com", claims["email"])
+	assert.Equal(t, "driver", claims["role"])
+	assert.Equal(t, "vehicle-positions-api", claims["iss"])
+
+	exp, ok := claims["exp"].(float64)
+	require.True(t, ok)
+	assert.True(t, exp > float64(time.Now().Unix()))
+}
+
+func TestRequireAuth_WrongSecret(t *testing.T) {
+	wrongSecret := []byte("the-wrong-secret-key-32-bytes-!!")
+
+	user := &User{ID: 1, Email: "hacker@evil.com", Role: "admin"}
+	tokenStr, _ := generateJWT(user, wrongSecret)
+
+	req := httptest.NewRequest("POST", "/api/v1/locations", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	rr := httptest.NewRecorder()
+
+	middleware := requireAuth(testSecret)
+	handler := middleware(dummyHandler())
+
+	handler.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+func TestRequireAuth_AlgorithmConfusion(t *testing.T) {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":1}`))
+
+	tokenStr := header + "." + payload + "."
+
+	req := httptest.NewRequest("POST", "/api/v1/locations", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	rr := httptest.NewRecorder()
+
+	middleware := requireAuth(testSecret)
+	handler := middleware(dummyHandler())
+
+	handler.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }

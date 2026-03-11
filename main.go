@@ -22,11 +22,11 @@ func main() {
 	writeTimeout := envDurationOrDefault("WRITE_TIMEOUT", 15*time.Second)
 	idleTimeout := envDurationOrDefault("IDLE_TIMEOUT", 60*time.Second)
 
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		log.Fatal("JWT_SECRET env var is required")
+	jwtSecretStr := os.Getenv("JWT_SECRET")
+	if len(jwtSecretStr) < 32 {
+		log.Fatal("JWT_SECRET must be at least 32 bytes long for HMAC-SHA256 security")
 	}
-	jwtSecret = []byte(secret)
+	jwtSecret := []byte(jwtSecretStr)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -61,7 +61,7 @@ func main() {
 	startTime := time.Now()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/auth/login", handleLogin(store))
+	mux.Handle("POST /api/v1/auth/login", handleLogin(store, jwtSecret))
 	mux.HandleFunc("GET /gtfs-rt/vehicle-positions", handleGetFeed(tracker))
 	// TODO: protect with requireAuth once auth lands
 	mux.HandleFunc("GET /api/v1/admin/status", handleAdminStatus(tracker, startTime))
@@ -69,7 +69,9 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	mux.Handle("POST /api/v1/locations", requireAuth(handlePostLocation(store, tracker)))
+	authMiddleware := requireAuth(jwtSecret)
+
+	mux.Handle("POST /api/v1/locations", authMiddleware(handlePostLocation(store, tracker)))
 
 	srv := &http.Server{
 		Addr:         ":" + port,
