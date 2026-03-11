@@ -87,6 +87,10 @@ func (s *Store) SaveLocation(ctx context.Context, loc *LocationReport) error {
 		TripID:    loc.TripID,
 		Latitude:  loc.Latitude,
 		Longitude: loc.Longitude,
+		// TODO: LocationReport uses bare float64, so we cannot distinguish
+		// "not provided" from zero. Bearing 0.0 (north) is stored as non-NULL
+		// even when the field was never set. A follow-up should change these
+		// fields to *float64 on LocationReport to preserve the distinction.
 		Bearing:   pgtype.Float8{Float64: loc.Bearing, Valid: true},
 		Speed:     pgtype.Float8{Float64: loc.Speed, Valid: true},
 		Accuracy:  pgtype.Float8{Float64: loc.Accuracy, Valid: true},
@@ -108,7 +112,7 @@ func (s *Store) GetRecentLocations(ctx context.Context, cutoff time.Time) ([]*Lo
 		return nil, fmt.Errorf("query recent locations: %w", err)
 	}
 
-	var locations []*LocationReport
+	locations := make([]*LocationReport, 0, len(rows))
 	for _, row := range rows {
 		loc := &LocationReport{
 			VehicleID: row.VehicleID,
