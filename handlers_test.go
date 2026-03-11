@@ -305,3 +305,43 @@ func TestHandlePostLocation_TrailingJSONRejected(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, resp["error"], "single JSON object")
 }
+
+func TestHandlePostLocation_TrailingEmptyJSONObjectRejected(t *testing.T) {
+	tracker := NewTracker(5 * time.Minute)
+	handler := handlePostLocation(nil, tracker)
+
+	body := []byte(`{"vehicle_id":"bus-1","latitude":1,"longitude":2,"timestamp":100}{}`)
+	w := postLocationWithBody(handler, body, "application/json")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]string
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Contains(t, resp["error"], "single JSON object")
+}
+
+func TestHandlePostLocation_TrailingGarbageRejected(t *testing.T) {
+	tracker := NewTracker(5 * time.Minute)
+	handler := handlePostLocation(nil, tracker)
+
+	body := []byte(`{"vehicle_id":"bus-1","latitude":1,"longitude":2,"timestamp":100}GARBAGE`)
+	w := postLocationWithBody(handler, body, "application/json")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]string
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Contains(t, resp["error"], "invalid JSON:")
+}
+
+func TestHandlePostLocation_TrailingWhitespaceAccepted(t *testing.T) {
+	tracker := NewTracker(5 * time.Minute)
+	mStore := &mockStore{}
+	handler := handlePostLocation(mStore, tracker)
+
+	body := []byte("{\"vehicle_id\":\"bus-1\",\"latitude\":1,\"longitude\":2,\"timestamp\":100}   \n")
+	w := postLocationWithBody(handler, body, "application/json")
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.True(t, mStore.saved, "location should be saved when only trailing whitespace exists")
+}

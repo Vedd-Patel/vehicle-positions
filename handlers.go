@@ -60,7 +60,7 @@ func handlePostLocation(store LocationSaver, tracker *Tracker) http.HandlerFunc 
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 			return
 		}
-		if err := decoder.Decode(&struct{}{}); err == nil {
+		if err := decoder.Decode(new(json.RawMessage)); err == nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: request body must contain a single JSON object and no trailing data"})
 			return
 		} else if err != io.EOF {
