@@ -438,7 +438,7 @@ func TestHandlePostLocation_ContentTypeWithCharsetAccepted(t *testing.T) {
 	mStore := &mockStore{}
 	handler := handlePostLocation(mStore, tracker, NewVehicleRateLimiter())
 
-	body := []byte(`{"vehicle_id":"bus-1","latitude":1,"longitude":2,"timestamp":100}`)
+	body := []byte(fmt.Sprintf(`{"vehicle_id":"bus-1","latitude":1,"longitude":2,"timestamp":%d}`, time.Now().Unix()))
 	req := httptest.NewRequest("POST", "/api/v1/locations", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	ctx := context.WithValue(req.Context(), claimsKey, jwt.MapClaims{"sub": "driver-1"})
@@ -510,17 +510,12 @@ func TestHandlePostLocation_TrailingWhitespaceAccepted(t *testing.T) {
 	mStore := &mockStore{}
 	handler := handlePostLocation(mStore, tracker, NewVehicleRateLimiter())
 
-<<<<<<< HEAD
-	body := []byte(fmt.Sprintf(`{"vehicle_id":"bus-1","latitude":1,"longitude":2,"timestamp":%d}   `+"\n", time.Now().Unix()))
-	w := postLocationWithBody(handler, body, "application/json")
-=======
-	body := []byte("{\"vehicle_id\":\"bus-1\",\"latitude\":1,\"longitude\":2,\"timestamp\":100}   \n")
+	body := []byte(fmt.Sprintf("{\"vehicle_id\":\"bus-1\",\"latitude\":1,\"longitude\":2,\"timestamp\":%d}   \n", time.Now().Unix()))
 	req := httptest.NewRequest("POST", "/api/v1/locations", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	ctx := context.WithValue(req.Context(), claimsKey, jwt.MapClaims{"sub": "driver-1"})
 	w := httptest.NewRecorder()
 	handler(w, req.WithContext(ctx))
->>>>>>> b9c46be (enforce strict JWT claims extraction in handlePostLocation)
 
 	assert.Equal(t, http.StatusCreated, w.Code)
 	assert.True(t, mStore.saved, "location should be saved when only trailing whitespace exists")

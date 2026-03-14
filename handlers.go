@@ -104,13 +104,13 @@ func handlePostLocation(store LocationSaver, tracker *Tracker, rl *VehicleRateLi
 
 		claims, ok := r.Context().Value(claimsKey).(jwt.MapClaims)
 		if !ok {
-			log.Printf("handlePostLocation: JWT claims missing from context")
+			slog.Warn("handlePostLocation: JWT claims missing from context")
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
 		sub, ok := claims["sub"].(string)
 		if !ok || sub == "" {
-			log.Printf("handlePostLocation: JWT sub claim missing or not a string")
+			slog.Warn("handlePostLocation: JWT sub claim missing or not a string")
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token: missing subject"})
 			return
 		}
