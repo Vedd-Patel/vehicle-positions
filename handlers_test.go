@@ -674,30 +674,6 @@ func TestHandlePostLocation_RateLimitDifferentVehiclesAreIndependent(t *testing.
 	assert.Equal(t, http.StatusTooManyRequests, postLocationWithClaims(handler, locB, claimsB).Code)
 }
 
-func TestBuildFeed_PreservesExplicitZeroBearingAndSpeed(t *testing.T) {
-	zero := 0.0
-	vehicles := []*VehicleState{
-		{
-			VehicleID: "bus-1",
-			Latitude:  1,
-			Longitude: 2,
-			Bearing:   &zero,
-			Speed:     &zero,
-			Timestamp: 100,
-		},
-	}
-
-	feed := buildFeed(vehicles)
-	require.Len(t, feed.Entity, 1)
-
-	pos := feed.Entity[0].Vehicle.Position
-	require.NotNil(t, pos.Bearing)
-	assert.Equal(t, float32(0), pos.GetBearing())
-
-	require.NotNil(t, pos.Speed)
-	assert.Equal(t, float32(0), pos.GetSpeed())
-}
-
 func TestHandlePostLocation_ExplicitZeroOptionalFieldsPreserved(t *testing.T) {
 	tracker := NewTracker(5 * time.Minute)
 	defer tracker.Stop()
