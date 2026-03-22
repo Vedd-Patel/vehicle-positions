@@ -48,12 +48,8 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     AppNavigation(
-                        onHomeViewModelReady = { vm ->
-                            homeViewModelRef = vm
-                        },
-                        onNavControllerReady = { nav ->
-                            navControllerRef = nav
-                        }
+                        onHomeViewModelReady = { vm -> homeViewModelRef = vm },
+                        onNavControllerReady = { nav -> navControllerRef = nav }
                     )
                 }
             }
@@ -64,16 +60,13 @@ class MainActivity : ComponentActivity() {
         stopShiftReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action == LocationForegroundService.BROADCAST_STOP_SHIFT) {
-                    android.util.Log.d("MainActivity",
-                        "Stop shift broadcast received — resetting state")
+                    android.util.Log.d("MainActivity", "Stop shift broadcast received")
 
-                    // Reset HomeViewModel state immediately
                     homeViewModelRef?.onShiftStopped()
 
-                    // Navigate back to home if on active tracking screen
+                    // Pop back to home if the user is on the active tracking screen
                     navControllerRef?.let { nav ->
-                        if (nav.currentDestination?.route
-                                ?.startsWith("active_tracking") == true) {
+                        if (nav.currentDestination?.route?.startsWith("active_tracking") == true) {
                             nav.popBackStack()
                         }
                     }
@@ -97,7 +90,7 @@ fun AppNavigation(
 ) {
     val navController = rememberNavController()
 
-    // Pass navController to MainActivity
+    // Expose the nav controller to MainActivity so the broadcast receiver can pop the back stack
     LaunchedEffect(navController) {
         onNavControllerReady(navController)
     }
@@ -126,6 +119,9 @@ fun AppNavigation(
             )
         ) { backStackEntry ->
             val vehicleId = backStackEntry.arguments?.getString("vehicleId") ?: ""
+
+            // Reuse the existing HomeViewModel instance from the back stack rather than
+            // creating a new one, so onShiftStopped() updates the correct state
             val homeBackStackEntry = remember(navController.currentBackStackEntry) {
                 navController.getBackStackEntry("home")
             }
