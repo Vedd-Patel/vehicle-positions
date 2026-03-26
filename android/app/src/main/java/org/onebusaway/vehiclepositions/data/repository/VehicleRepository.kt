@@ -51,8 +51,8 @@ class VehicleRepository @Inject constructor(
             val token = tokenManager.getToken()
 
             if (token == null) {
-                Log.w(TAG, "No JWT token — skipping location report")
-                return Result.success(Unit)
+                Log.w(TAG, "No JWT token — location report skipped")
+                return Result.failure(Exception("No JWT token available"))
             }
 
             val response = apiService.postLocation("Bearer $token", request)
