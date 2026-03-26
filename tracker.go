@@ -109,6 +109,18 @@ func (t *Tracker) ActiveVehicles() []*VehicleState {
 	for _, v := range t.vehicles {
 		if v.UpdatedAt.After(cutoff) {
 			copy := *v
+			if v.Bearing != nil {
+				b := *v.Bearing
+				copy.Bearing = &b
+			}
+			if v.Speed != nil {
+				s := *v.Speed
+				copy.Speed = &s
+			}
+			if v.Accuracy != nil {
+				a := *v.Accuracy
+				copy.Accuracy = &a
+			}
 			active = append(active, &copy)
 		}
 	}

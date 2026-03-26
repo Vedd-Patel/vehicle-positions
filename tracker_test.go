@@ -296,3 +296,42 @@ func TestTracker_Update_PreservesExplicitZeroOptionalFields(t *testing.T) {
 	require.NotNil(t, active[0].Accuracy)
 	assert.Equal(t, 0.0, *active[0].Accuracy)
 }
+
+// This test ensures that the ActiveVehicles method returns deep copies of the vehicle states
+func TestTracker_ActiveVehicles_ReturnsDeepCopies(t *testing.T) {
+	tracker := NewTracker(5 * time.Minute)
+	defer tracker.Stop()
+
+	bearing := 10.0
+	speed := 20.0
+	accuracy := 30.0
+
+	tracker.Update(&LocationReport{
+		VehicleID: "bus-1",
+		Latitude:  1,
+		Longitude: 2,
+		Bearing:   &bearing,
+		Speed:     &speed,
+		Accuracy:  &accuracy,
+		Timestamp: 100,
+	})
+
+	active := tracker.ActiveVehicles()
+	require.Len(t, active, 1)
+
+	*active[0].Bearing = 100
+	*active[0].Speed = 200
+	*active[0].Accuracy = 300
+
+	fresh := tracker.ActiveVehicles()
+	require.Len(t, fresh, 1)
+
+	require.NotNil(t, fresh[0].Bearing)
+	assert.Equal(t, 10.0, *fresh[0].Bearing)
+
+	require.NotNil(t, fresh[0].Speed)
+	assert.Equal(t, 20.0, *fresh[0].Speed)
+
+	require.NotNil(t, fresh[0].Accuracy)
+	assert.Equal(t, 30.0, *fresh[0].Accuracy)
+}
