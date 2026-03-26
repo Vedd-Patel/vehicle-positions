@@ -82,6 +82,14 @@ func handleStartTrip(store TripStarter) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vehicle_id must contain only alphanumeric characters, dots, hyphens, and underscores"})
 			return
 		}
+		if len(req.RouteID) > 100 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "route_id must be at most 100 characters"})
+			return
+		}
+		if len(req.GtfsTripID) > 100 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "gtfs_trip_id must be at most 100 characters"})
+			return
+		}
 
 		trip, err := store.StartTrip(r.Context(), userID, req.VehicleID, req.RouteID, req.GtfsTripID)
 		if err != nil {

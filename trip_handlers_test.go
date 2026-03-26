@@ -338,6 +338,24 @@ func TestHandleStartTrip_VehicleIDFormat(t *testing.T) {
 	}
 }
 
+func TestHandleStartTrip_RouteIDTooLong(t *testing.T) {
+	store := &mockTripStarter{}
+	handler := handleStartTrip(store)
+	w := tripRequest(t, handler, "42", StartTripRequest{VehicleID: "bus-1", RouteID: strings.Repeat("r", 101)})
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, decodeError(t, w), "route_id must be at most 100 characters")
+}
+
+func TestHandleStartTrip_GtfsTripIDTooLong(t *testing.T) {
+	store := &mockTripStarter{}
+	handler := handleStartTrip(store)
+	w := tripRequest(t, handler, "42", StartTripRequest{VehicleID: "bus-1", GtfsTripID: strings.Repeat("g", 101)})
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, decodeError(t, w), "gtfs_trip_id must be at most 100 characters")
+}
+
 func TestHandleStartTrip_InternalServerError(t *testing.T) {
 	store := &mockTripStarter{err: assert.AnError}
 	handler := handleStartTrip(store)
