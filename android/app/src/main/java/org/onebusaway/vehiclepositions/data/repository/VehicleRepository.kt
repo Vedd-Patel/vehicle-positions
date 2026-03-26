@@ -59,7 +59,7 @@ class VehicleRepository @Inject constructor(
 
             when {
                 response.isSuccessful -> {
-                    // Never log GPS coordinates — they're PII
+                    // Never log GPS coordinates - they're PII (intentionally added emoji)
                     Log.d(TAG, "Location reported ✅ vehicle=${request.vehicleId}")
                     Result.success(Unit)
                 }
@@ -92,7 +92,7 @@ class VehicleRepository @Inject constructor(
             val refreshToken = tokenManager.getRefreshToken()
                 ?: return Result.failure(Exception("No refresh token"))
             val response = apiService.refreshToken(RefreshTokenRequest(refreshToken))
-            tokenManager.saveToken(response.token)
+            tokenManager.saveToken(response.accessToken)
             tokenManager.saveRefreshToken(response.refreshToken)
             Log.d(TAG, "Token refreshed successfully")
             Result.success(Unit)
