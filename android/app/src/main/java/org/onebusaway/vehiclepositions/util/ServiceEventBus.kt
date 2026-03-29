@@ -1,27 +1,34 @@
 package org.onebusaway.vehiclepositions.util
 
+import android.util.Log
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Singleton event bus for one-way communication from LocationForegroundService
- * to ActiveTrackingViewModel. The service runs in a different coroutine scope
- * than the ViewModel so we use a SharedFlow as the bridge.
- */
 sealed class ServiceEvent {
-    data class NavigateToLogin(val message: String) : ServiceEvent()
-    data class LocationPermissionRevoked(val message: String) : ServiceEvent()
+    object StopShift : ServiceEvent()
+    object NavigateToLogin : ServiceEvent()
+    object LocationPermissionRevoked : ServiceEvent()
 }
 
 @Singleton
 class ServiceEventBus @Inject constructor() {
+
     private val _events = MutableSharedFlow<ServiceEvent>(extraBufferCapacity = 4)
     val events: SharedFlow<ServiceEvent> = _events.asSharedFlow()
 
     fun emit(event: ServiceEvent) {
-        _events.tryEmit(event)
+        val emitted = _events.tryEmit(event)
+        if (!emitted) {
+            // buffer full - critical navigation/security event dropped
+            // thiss should not happen in normal operation
+            Log.e("ServiceEventBus", "Event dropped — buffer full: $event")
+        }
     }
+
+    fun emitStopShift() = emit(ServiceEvent.StopShift)
+    fun emitNavigateToLogin() = emit(ServiceEvent.NavigateToLogin)
+    fun emitLocationPermissionRevoked() = emit(ServiceEvent.LocationPermissionRevoked)
 }
