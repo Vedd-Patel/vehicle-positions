@@ -1,6 +1,7 @@
 package org.onebusaway.vehiclepositions.data.repository
 
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import org.onebusaway.vehiclepositions.data.local.VehicleDao
 import org.onebusaway.vehiclepositions.data.local.VehicleEntity
@@ -59,7 +60,7 @@ class VehicleRepository @Inject constructor(
 
             when {
                 response.isSuccessful -> {
-                    // Never log GPS coordinates - they're PII (intentionally added emoji)
+                    // No GPS coordinates in logs (PII) (intentionally added emoji)
                     Log.d(TAG, "Location reported ✅ vehicle=${request.vehicleId}")
                     Result.success(Unit)
                 }
@@ -68,9 +69,9 @@ class VehicleRepository @Inject constructor(
                     Result.failure(Exception("401"))
                 }
                 response.code() == 429 -> {
-                    // Back off gracefully — no need to surface this as a failure
-                    Log.w(TAG, "429 Rate limited")
-                    Result.success(Unit)
+                    // Return failure so caller can implement backoff
+                    Log.w(TAG, "429 Rate limited — reporting too fast")
+                    Result.failure(Exception("429: rate limited"))
                 }
                 response.code() == 400 -> {
                     Log.e(TAG, "400 Bad request — invalid vehicle_id: ${request.vehicleId}")
@@ -81,6 +82,9 @@ class VehicleRepository @Inject constructor(
                     Result.failure(Exception("${response.code()}"))
                 }
             }
+        } catch (e: CancellationException) {
+            // Always rethrow CancellationException to preserve structured concurrency
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Network error posting location: ${e.message}")
             Result.failure(e)
@@ -91,11 +95,29 @@ class VehicleRepository @Inject constructor(
         return try {
             val refreshToken = tokenManager.getRefreshToken()
                 ?: return Result.failure(Exception("No refresh token"))
+
             val response = apiService.refreshToken(RefreshTokenRequest(refreshToken))
-            tokenManager.saveToken(response.accessToken)
-            tokenManager.saveRefreshToken(response.refreshToken)
-            Log.d(TAG, "Token refreshed successfully")
-            Result.success(Unit)
+
+            when {
+                response.isSuccessful -> {
+                    val body = response.body()
+                        ?: return Result.failure(Exception("Empty refresh response"))
+                    tokenManager.saveToken(body.token)
+                    tokenManager.saveRefreshToken(body.refreshToken)
+                    Log.d(TAG, "Token refreshed successfully")
+                    Result.success(Unit)
+                }
+                response.code() == 401 -> {
+                    Log.e(TAG, "401 on refresh — user must re-login")
+                    Result.failure(Exception("401: refresh token expired"))
+                }
+                else -> {
+                    Log.e(TAG, "Refresh failed with ${response.code()} — transient error")
+                    Result.failure(Exception("${response.code()}"))
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Token refresh failed: ${e.message}")
             Result.failure(e)
