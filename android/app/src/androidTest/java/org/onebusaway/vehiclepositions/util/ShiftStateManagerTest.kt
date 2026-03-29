@@ -1,51 +1,78 @@
 package org.onebusaway.vehiclepositions.util
 
+import android.content.Context
+import androidx.datastore.preferences.core.edit
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
 
-class ServiceEventBusTest {
+@RunWith(AndroidJUnit4::class)
+class ShiftStateManagerTest {
 
-    private lateinit var bus: ServiceEventBus
+    private lateinit var context: Context
+    private lateinit var manager: ShiftStateManager
 
     @Before
     fun setup() {
-        bus = ServiceEventBus()
+        context = ApplicationProvider.getApplicationContext()
+        manager = ShiftStateManager(context)
+
+        runBlocking {
+            context.dataStore.edit { preferences ->
+                preferences.clear()
+            }
+        }
+    }
+
+    @After
+    fun teardown() {
+        runBlocking {
+            context.dataStore.edit { preferences ->
+                preferences.clear()
+            }
+        }
     }
 
     @Test
-    fun `ServiceEventBus initializes without error`() {
-        assertNotNull(bus)
+    fun initialShiftStateIsNotActive() = runTest {
+        assertFalse(manager.isShiftActive.first())
     }
 
     @Test
-    fun `emitting StopShift event is received by collector`() = runTest {
-        bus.emitStopShift()
-        val event = bus.events.first()
-        assertEquals(ServiceEvent.StopShift, event)
+    fun initialVehicleIdIsNull() = runTest {
+        assertNull(manager.activeVehicleId.first())
     }
 
     @Test
-    fun `emitting NavigateToLogin event is received by collector`() = runTest {
-        bus.emitNavigateToLogin()
-        val event = bus.events.first()
-        assertEquals(ServiceEvent.NavigateToLogin, event)
+    fun startShiftSetsShiftActiveAndVehicleId() = runTest {
+        manager.startShift("2045")
+        assertTrue(manager.isShiftActive.first())
+        assertEquals("2045", manager.activeVehicleId.first())
     }
 
     @Test
-    fun `emitting LocationPermissionRevoked event is received by collector`() = runTest {
-        bus.emitLocationPermissionRevoked()
-        val event = bus.events.first()
-        assertEquals(ServiceEvent.LocationPermissionRevoked, event)
+    fun endShiftClearsShiftState() = runTest {
+        manager.startShift("2045")
+        manager.endShift()
+        assertFalse(manager.isShiftActive.first())
+        assertNull(manager.activeVehicleId.first())
     }
 
     @Test
-    fun `multiple events are received in order`() = runTest {
-        bus.emitStopShift()
-        val event = bus.events.first()
-        assertEquals(ServiceEvent.StopShift, event)
+    fun startShiftWithDifferentVehicleIdUpdatesCorrectly() = runTest {
+        manager.startShift("2045")
+        manager.endShift()
+        manager.startShift("9999")
+        assertEquals("9999", manager.activeVehicleId.first())
     }
 }
