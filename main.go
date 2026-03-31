@@ -86,6 +86,8 @@ func main() {
 	mux.HandleFunc("GET /ready", handleReadiness(store))
 
 	mux.Handle("POST /api/v1/locations", authMiddleware(handlePostLocation(store, tracker, rateLimiter)))
+	mux.Handle("POST /api/v1/trips/start", authMiddleware(handleStartTrip(store)))
+	mux.Handle("POST /api/v1/trips/end", authMiddleware(handleEndTrip(store)))
 
 	// Admin user management
 	mux.Handle("GET /api/v1/admin/users", authMiddleware(handleListUsers(store)))
