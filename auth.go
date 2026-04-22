@@ -161,16 +161,16 @@ func requireAuth(secret []byte) func(http.Handler) http.Handler {
 			}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer("vehicle-positions-api"))
 
 			if err != nil {
-+				slog.Warn("token validation failed", "error", err)
-+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
-+				return
-+			}
+				slog.Warn("token validation failed", "error", err)
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+				return
+			}
 
-+			if !token.Valid {
-+				slog.Warn("token validation failed: token marked invalid")
-+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
-+				return
-+			}
+			if !token.Valid {
+				slog.Warn("token validation failed: token marked invalid")
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+				return
+			}
 
 			claims, ok := token.Claims.(jwt.MapClaims)
 			if !ok {
