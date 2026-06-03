@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -310,4 +312,72 @@ func TestStore_CascadeDeleteVehicle(t *testing.T) {
 	).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count, "ON DELETE CASCADE should remove assignment when vehicle is deleted")
+}
+
+func TestPgErrorHelpers(t *testing.T) {
+	tests := []struct {
+		name           string
+		code           string
+		constraintName string
+		wantUnique     bool
+		wantFK         bool
+		wantFKName     string
+	}{
+		{
+			name:           "unique violation",
+			code:           "23505",
+			constraintName: "user_vehicles_pkey",
+			wantUnique:     true,
+			wantFK:         false,
+			wantFKName:     "user_vehicles_pkey",
+		},
+		{
+			name:           "FK violation user_id",
+			code:           "23503",
+			constraintName: "user_vehicles_user_id_fkey",
+			wantUnique:     false,
+			wantFK:         true,
+			wantFKName:     "user_vehicles_user_id_fkey",
+		},
+		{
+			name:           "FK violation vehicle_id",
+			code:           "23503",
+			constraintName: "user_vehicles_vehicle_id_fkey",
+			wantUnique:     false,
+			wantFK:         true,
+			wantFKName:     "user_vehicles_vehicle_id_fkey",
+		},
+		{
+			name:           "FK violation unrecognized constraint",
+			code:           "23503",
+			constraintName: "user_vehicles_unknown_fkey",
+			wantUnique:     false,
+			wantFK:         true,
+			wantFKName:     "user_vehicles_unknown_fkey",
+		},
+		{
+			name:           "other error code",
+			code:           "42P01",
+			constraintName: "",
+			wantUnique:     false,
+			wantFK:         false,
+			wantFKName:     "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pgErr := &pgconn.PgError{Code: tc.code, ConstraintName: tc.constraintName}
+			assert.Equal(t, tc.wantUnique, isUniqueViolation(pgErr))
+			assert.Equal(t, tc.wantFK, isFKViolation(pgErr))
+			assert.Equal(t, tc.wantFKName, fkConstraintName(pgErr))
+		})
+	}
+}
+
+func TestFkConstraintName_NonPgError(t *testing.T) {
+	err := errors.New("not a pg error")
+	assert.Equal(t, "", fkConstraintName(err))
+	assert.False(t, isUniqueViolation(err))
+	assert.False(t, isFKViolation(err))
 }

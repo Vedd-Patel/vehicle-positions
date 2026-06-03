@@ -276,6 +276,8 @@ func TestHandleCreateAssignment_MissingContentType(t *testing.T) {
 
 	w := postAssignment(handler, []byte(`{}`), "")
 	assert.Equal(t, http.StatusUnsupportedMediaType, w.Code)
+	errMsg := decodeAssignmentError(t, w)
+	assert.Contains(t, errMsg, "Content-Type must be application/json")
 }
 
 func TestHandleCreateAssignment_UnknownFieldRejected(t *testing.T) {
@@ -329,6 +331,30 @@ func TestHandleCreateAssignment_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	errMsg := decodeAssignmentError(t, w)
 	assert.Contains(t, errMsg, "invalid JSON:")
+}
+
+func TestHandleCreateAssignment_RequestBodyTooLarge(t *testing.T) {
+	handler := handleCreateAssignment(&mockAssignmentCreator{})
+
+	largeBody := `{"user_id":1,"vehicle_id":"bus-1","padding":"` + strings.Repeat("x", 2048) + `"}`
+	w := postAssignment(handler, []byte(largeBody), "application/json")
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+	errMsg := decodeAssignmentError(t, w)
+	assert.Contains(t, errMsg, "request body too large")
+}
+
+func TestHandleCreateAssignment_TypeMismatchSanitized(t *testing.T) {
+	handler := handleCreateAssignment(&mockAssignmentCreator{})
+
+	body := []byte(`{"user_id": "not-a-number", "vehicle_id": "bus-1"}`)
+	w := postAssignment(handler, body, "application/json")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	errMsg := decodeAssignmentError(t, w)
+	assert.Contains(t, errMsg, "invalid JSON:")
+	assert.NotContains(t, errMsg, "Go struct field")
+	assert.NotContains(t, errMsg, "AssignmentRequest")
 }
 
 func TestHandleCreateAssignment_ContentTypeWithCharset(t *testing.T) {
@@ -399,9 +425,10 @@ func TestHandleDeleteAssignment_InvalidVehicleID(t *testing.T) {
 	tests := []struct {
 		name      string
 		vehicleID string
+		wantError string
 	}{
-		{"special chars", "bus@1!"},
-		{"too long", strings.Repeat("a", 51)},
+		{"special chars", "bus@1!", "vehicle id must contain only alphanumeric characters, dots, hyphens, and underscores"},
+		{"too long", strings.Repeat("a", 51), "vehicle id must be at most 50 characters"},
 	}
 
 	for _, tc := range tests {
@@ -409,7 +436,7 @@ func TestHandleDeleteAssignment_InvalidVehicleID(t *testing.T) {
 			w := deleteAssignment(handler, "1", tc.vehicleID)
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 			errMsg := decodeAssignmentError(t, w)
-			assert.Equal(t, "invalid vehicle id", errMsg)
+			assert.Equal(t, tc.wantError, errMsg)
 		})
 	}
 }
@@ -537,9 +564,10 @@ func TestHandleListVehicleUsers_InvalidVehicleID(t *testing.T) {
 	tests := []struct {
 		name      string
 		vehicleID string
+		wantError string
 	}{
-		{"special chars", "bus@1!"},
-		{"too long", strings.Repeat("a", 51)},
+		{"special chars", "bus@1!", "vehicle id must contain only alphanumeric characters, dots, hyphens, and underscores"},
+		{"too long", strings.Repeat("a", 51), "vehicle id must be at most 50 characters"},
 	}
 
 	for _, tc := range tests {
@@ -547,7 +575,7 @@ func TestHandleListVehicleUsers_InvalidVehicleID(t *testing.T) {
 			w := listVehicleUsers(handler, tc.vehicleID)
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 			errMsg := decodeAssignmentError(t, w)
-			assert.Equal(t, "invalid vehicle id", errMsg)
+			assert.Equal(t, tc.wantError, errMsg)
 		})
 	}
 }

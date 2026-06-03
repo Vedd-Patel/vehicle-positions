@@ -26,20 +26,25 @@ func handleCreateAssignment(store AssignmentCreator) http.HandlerFunc {
 			return
 		}
 
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<10) // 1KB
 
 		var req AssignmentRequest
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+				return
+			}
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + sanitizeJSONError(err)})
 			return
 		}
 		if err := decoder.Decode(new(json.RawMessage)); err == nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: request body must contain a single JSON object and no trailing data"})
 			return
-		} else if !errors.Is(err, io.EOF) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		} else if err != io.EOF {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + sanitizeJSONError(err)})
 			return
 		}
 
@@ -86,7 +91,7 @@ func handleDeleteAssignment(store AssignmentDeleter) http.HandlerFunc {
 
 		vehicleID := r.PathValue("vehicleID")
 		if err := validateVehicleID(vehicleID); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid vehicle id"})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 
@@ -132,7 +137,7 @@ func handleListVehicleUsers(store AssignmentListerByVehicle) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vehicleID := r.PathValue("id")
 		if err := validateVehicleID(vehicleID); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid vehicle id"})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 
