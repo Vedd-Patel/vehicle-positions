@@ -110,7 +110,7 @@ func main() {
 	// placeholder data and no authentication, so it is disabled by default and
 	// must be explicitly turned on via ADMIN_UI_ENABLED. Do not enable it in
 	// production until the routes are gated behind real session auth.
-	if envOrDefault("ADMIN_UI_ENABLED", "false") == "true" {
+	if adminUIEnabled() {
 		if err := registerAdminUI(mux); err != nil {
 			slog.Error("failed to enable admin UI", "error", err)
 			os.Exit(1)

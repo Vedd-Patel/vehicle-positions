@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bytes"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -61,36 +61,56 @@ func TestAdminHandlersRenderOK(t *testing.T) {
 	}
 }
 
-// TestExecuteTemplateUnknownNames verifies the dispatcher rejects unknown view
-// names instead of silently falling back to a default template.
-func TestExecuteTemplateUnknownNames(t *testing.T) {
+// TestRenderUnknownViewWritesCleanError verifies that rendering a view absent
+// from the template set yields a clean 500 rather than silently falling back to
+// another template or writing a partial 200 body.
+func TestRenderUnknownViewWritesCleanError(t *testing.T) {
 	loadAdminTemplates(t)
 
-	t.Run("unknown public", func(t *testing.T) {
-		err := templates.ExecuteTemplate(&bytes.Buffer{}, "does-not-exist.html", map[string]interface{}{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown public template")
-	})
+	for _, set := range []map[string]*template.Template{templates.admin, templates.public} {
+		rec := httptest.NewRecorder()
+		render(rec, set, "ghost.html", "base.html", map[string]interface{}{})
 
-	t.Run("unknown admin", func(t *testing.T) {
-		data := map[string]interface{}{adminTemplateKey: "ghost.html"}
-		err := templates.ExecuteTemplate(&bytes.Buffer{}, "base.html", data)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown admin template")
-	})
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.Contains(t, rec.Body.String(), "internal server error")
+	}
 }
 
-// TestRenderWritesCleanErrorResponse verifies a render failure produces a 500
-// rather than a partially written 200 body.
-func TestRenderWritesCleanErrorResponse(t *testing.T) {
-	loadAdminTemplates(t)
+// TestAdminUIEnabledFlag pins the gate that keeps the unauthenticated admin UI
+// off by default — the single safety mechanism behind the feature.
+func TestAdminUIEnabledFlag(t *testing.T) {
+	cases := map[string]bool{
+		"true":     true,
+		"1":        true,
+		"TRUE":     true,
+		"t":        true,
+		"false":    false,
+		"0":        false,
+		"":         false,
+		"nonsense": false,
+	}
+
+	for val, want := range cases {
+		t.Run("val="+val, func(t *testing.T) {
+			t.Setenv("ADMIN_UI_ENABLED", val)
+			assert.Equal(t, want, adminUIEnabled())
+		})
+	}
+}
+
+// TestRenderExecutionErrorIsCleanError verifies the buffered-write contract: a
+// template that fails partway through must not leak partial output — the client
+// gets a clean 500, not a half-written 200.
+func TestRenderExecutionErrorIsCleanError(t *testing.T) {
+	tmpl := template.Must(template.New("base.html").Parse(`PARTIAL-OUTPUT{{index .Items 99}}`))
+	set := map[string]*template.Template{"boom.html": tmpl}
 
 	rec := httptest.NewRecorder()
-	// "/" has no registered template, so render must fail cleanly.
-	render(rec, "/", "missing.html", map[string]interface{}{})
+	render(rec, set, "boom.html", "base.html", map[string]interface{}{"Items": []int{}})
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Contains(t, rec.Body.String(), "internal server error")
+	assert.NotContains(t, rec.Body.String(), "PARTIAL-OUTPUT")
 }
 
 func TestRegisterAdminUI(t *testing.T) {

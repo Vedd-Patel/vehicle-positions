@@ -4,14 +4,22 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
-	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 	"path"
+	"strconv"
 )
 
-const adminTemplateKey = "_admin_template"
+// adminUIEnabled reports whether the admin UI should be served, controlled by
+// the ADMIN_UI_ENABLED environment variable (default false). Any value
+// strconv.ParseBool accepts as true (1, t, T, TRUE, true, ...) turns it on;
+// unset or unparseable values leave it off.
+func adminUIEnabled() bool {
+	enabled, _ := strconv.ParseBool(os.Getenv("ADMIN_UI_ENABLED"))
+	return enabled
+}
 
 // registerAdminUI loads the embedded templates, mounts the static file server,
 // and registers the admin UI routes on mux. It returns an error if the
@@ -85,74 +93,40 @@ func loadTemplates() (*embeddedTemplates, error) {
 	}, nil
 }
 
-func adminViewName(data any) (string, error) {
-	templateData, ok := data.(map[string]interface{})
+// render looks up the parsed template set by view name and executes rootName
+// into a buffer first, so a mid-render failure yields a clean 500 instead of a
+// half-written 200 with a corrupted body. An unknown view is a programmer error
+// (the route registered it) but is still reported rather than silently ignored.
+func render(w http.ResponseWriter, set map[string]*template.Template, view, rootName string, data map[string]interface{}) {
+	tmpl, ok := set[path.Base(view)]
 	if !ok {
-		return "", fmt.Errorf("admin template data must be map[string]interface{}")
+		slog.Error("template render failed", "view", view, "error", "no such template")
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
 	}
 
-	viewName, ok := templateData[adminTemplateKey].(string)
-	if !ok || viewName == "" {
-		return "", fmt.Errorf("admin template view is missing")
-	}
-
-	return viewName, nil
-}
-
-func withAdminTemplate(data map[string]interface{}, view string) map[string]interface{} {
-	renderData := make(map[string]interface{}, len(data)+1)
-	for k, v := range data {
-		renderData[k] = v
-	}
-
-	renderData[adminTemplateKey] = path.Base(view)
-	return renderData
-}
-
-// ExecuteTemplate renders either an admin page (when name is "base.html", the
-// shared layout root) or a named public page. Unknown names return an error
-// instead of silently falling back to a default template.
-func (t *embeddedTemplates) ExecuteTemplate(w io.Writer, name string, data any) error {
-	if name == "base.html" {
-		viewName, err := adminViewName(data)
-		if err != nil {
-			return err
-		}
-
-		tmpl, ok := t.admin[viewName]
-		if !ok {
-			return fmt.Errorf("unknown admin template: %s", viewName)
-		}
-
-		return tmpl.ExecuteTemplate(w, name, data)
-	}
-
-	tmpl, ok := t.public[name]
-	if !ok {
-		return fmt.Errorf("unknown public template: %s", name)
-	}
-
-	return tmpl.Execute(w, data)
-}
-
-// render executes a template into a buffer first so that a mid-render failure
-// yields a clean 500 instead of a half-written 200 with a corrupted body.
-func render(w http.ResponseWriter, view, name string, data map[string]interface{}) {
 	var buf bytes.Buffer
-	if err := templates.ExecuteTemplate(&buf, name, data); err != nil {
+	if err := tmpl.ExecuteTemplate(&buf, rootName, data); err != nil {
 		slog.Error("template render failed", "view", view, "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	_, _ = buf.WriteTo(w)
+	if _, err := buf.WriteTo(w); err != nil {
+		// The 200 header is already committed, so we can't convert this to a
+		// 500 — log it so a truncated response is at least visible server-side.
+		slog.Error("template response write failed", "view", view, "error", err)
+	}
 }
 
+// renderPublic renders a standalone public page (e.g. login) by its own name.
 func renderPublic(w http.ResponseWriter, view string, data map[string]interface{}) {
-	render(w, view, path.Base(view), data)
+	render(w, templates.public, view, path.Base(view), data)
 }
 
+// renderAdmin renders an admin page through the shared base.html layout, which
+// pulls in the view's {{define "content"}} block.
 func renderAdmin(w http.ResponseWriter, view string, data map[string]interface{}) {
-	render(w, view, "base.html", withAdminTemplate(data, view))
+	render(w, templates.admin, view, "base.html", data)
 }
 
 func AdminMapHandler(w http.ResponseWriter, r *http.Request) {
